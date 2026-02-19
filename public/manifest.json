@@ -1,0 +1,31 @@
+{
+  "bundles": [
+    {
+      "name": "warrior",
+      "assets": [
+        {
+          "alias": "guy_warrior",
+          "src": "/images/character.png"
+        }
+      ]
+    },
+    {
+      "name": "hero",
+      "assets": [
+        {
+          "alias": "hero",
+          "src": "/images/new-hero.png"
+        }
+      ]
+    },
+    {
+      "name": "map",
+      "assets": [
+        {
+          "alias": "map",
+          "src": "/images/new-map.png"
+        }
+      ]
+    }
+  ]
+}

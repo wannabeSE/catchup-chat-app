@@ -8,6 +8,7 @@ export default defineNuxtConfig({
   vite: {
     plugins: [tailwindcss()],
   },
+  ssr: false,
   runtimeConfig: {
     public: {
       SUPABASE_PROJECT_URL: process.env.SUPABASE_PROJECT_URL,
