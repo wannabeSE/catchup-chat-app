@@ -23,17 +23,32 @@
 </template>
 
 <script setup lang="ts">
-import { Application, Assets, Container, Rectangle, Sprite, Texture } from "pixi.js";
+import {
+  Application,
+  Assets,
+  Container,
+  Rectangle,
+  Sprite,
+  Texture,
+} from "pixi.js";
 import HeroImg from "../../../public/images/hero.png";
 import type { Direction, Position } from "~/types/shared";
-
-const TILE_SIZE = 32;
-const MOVE_SPEED = 160; // pixels per second
-
+import {
+  TILE_SIZE,
+  MOVE_SPEED,
+  MOVE_DELAY_MS,
+  FRAME_WIDTH,
+  FRAME_HEIGHT,
+  TOTAL_FRAMES,
+  ANIMATION_SPEED,
+} from "~/constants/world-constants";
 const containerRef = ref<HTMLDivElement | null>(null);
+const movementDelayTimeoutRef = ref<ReturnType<typeof setTimeout> | null>(null);
 const appRef = ref<Application | null>(null);
 const dragCleanupRef = ref<(() => void) | null>(null);
-const zoomControls = ref<{ zoomIn: () => void; zoomOut: () => void } | null>(null);
+const zoomControls = ref<{ zoomIn: () => void; zoomOut: () => void } | null>(
+  null,
+);
 
 const heroPosition = ref<Position>({ x: 192, y: 192 });
 const targetPosition = ref<Position | null>(null);
@@ -61,27 +76,49 @@ const keyToDirection = (key: string): Direction | null => {
 };
 
 const getNextTileTarget = (from: Position, direction: Direction): Position => ({
-  x: from.x + (direction === "left" ? -TILE_SIZE : direction === "right" ? TILE_SIZE : 0),
-  y: from.y + (direction === "up" ? -TILE_SIZE : direction === "down" ? TILE_SIZE : 0),
+  x:
+    from.x +
+    (direction === "left" ? -TILE_SIZE : direction === "right" ? TILE_SIZE : 0),
+  y:
+    from.y +
+    (direction === "up" ? -TILE_SIZE : direction === "down" ? TILE_SIZE : 0),
 });
 
 const moveTowards = (current: number, target: number, maxStep: number) =>
-  current + Math.sign(target - current) * Math.min(Math.abs(target - current), maxStep);
+  current +
+  Math.sign(target - current) * Math.min(Math.abs(target - current), maxStep);
 
-const onKeydown = (e: KeyboardEvent) => {
-  const direction = keyToDirection(e.key);
-  if (!direction) return;
-  e.preventDefault();
-  pressedDirection.value = direction;
-  facingDirection.value = direction;
+const startMovementToward = (direction: Direction) => {
   if (!targetPosition.value) {
     targetPosition.value = getNextTileTarget(heroPosition.value, direction);
   }
 };
 
+const onKeydown = (e: KeyboardEvent) => {
+  const direction = keyToDirection(e.key);
+  if (!direction) return;
+  e.preventDefault();
+  if (movementDelayTimeoutRef.value) {
+    clearTimeout(movementDelayTimeoutRef.value);
+    movementDelayTimeoutRef.value = null;
+  }
+  pressedDirection.value = direction;
+  facingDirection.value = direction;
+  movementDelayTimeoutRef.value = setTimeout(() => {
+    movementDelayTimeoutRef.value = null;
+    if (pressedDirection.value === direction) {
+      startMovementToward(direction);
+    }
+  }, MOVE_DELAY_MS);
+};
+
 const onKeyup = (e: KeyboardEvent) => {
   const direction = keyToDirection(e.key);
   if (!direction) return;
+  if (movementDelayTimeoutRef.value) {
+    clearTimeout(movementDelayTimeoutRef.value);
+    movementDelayTimeoutRef.value = null;
+  }
   if (pressedDirection.value === direction) {
     pressedDirection.value = null;
   }
@@ -91,39 +128,41 @@ const initPixi = async () => {
   const app = new Application();
   appRef.value = app;
   await app.init({
-    background: "#C0C2DC",
+    background: "#2B1B34",
     resizeTo: window,
     backgroundAlpha: 1,
   });
 
   const map = await Assets.loadBundle("map");
   const mapTexture = map.map;
+
   await Assets.load(HeroImg);
   const heroTexture = Texture.from(HeroImg);
 
-  const frameWidth = 64;
-  const frameHeight = 64;
-  const totalFrames = 9;
-  const animationSpeed = 0.2;
   let frameIndex = 0;
   let elapsedTime = 0;
 
   const getRowByDirection = (direction: Direction) => {
     switch (direction) {
-      case "up": return 8;
-      case "left": return 9;
-      case "right": return 11;
-      case "down": return 10;
-      default: return 10;
+      case "up":
+        return 8;
+      case "left":
+        return 9;
+      case "right":
+        return 11;
+      case "down":
+        return 10;
+      default:
+        return 10;
     }
   };
 
   const getFrameTexture = (row: number, column: number) => {
     const rect = new Rectangle(
-      column * frameWidth,
-      row * frameHeight,
-      frameWidth,
-      frameHeight,
+      column * FRAME_WIDTH,
+      row * FRAME_HEIGHT,
+      FRAME_WIDTH,
+      FRAME_HEIGHT,
     );
     return new Texture({ source: heroTexture.source, frame: rect });
   };
@@ -135,10 +174,10 @@ const initPixi = async () => {
     const row = getRowByDirection(direction);
     let column = 0;
     if (moving) {
-      elapsedTime += animationSpeed;
+      elapsedTime += ANIMATION_SPEED;
       if (elapsedTime >= 1) {
         elapsedTime = 0;
-        frameIndex = (frameIndex + 1) % totalFrames;
+        frameIndex = (frameIndex + 1) % TOTAL_FRAMES;
       }
       column = frameIndex;
     }
@@ -156,13 +195,19 @@ const initPixi = async () => {
     if (target) {
       isMoving.value = true;
       const step = MOVE_SPEED * deltaSec;
-      const dist = Math.hypot(target.x - heroPosition.value.x, target.y - heroPosition.value.y);
+      const dist = Math.hypot(
+        target.x - heroPosition.value.x,
+        target.y - heroPosition.value.y,
+      );
 
       if (dist <= step) {
         heroPosition.value = { ...target };
         if (pressedDirection.value) {
           facingDirection.value = pressedDirection.value;
-          targetPosition.value = getNextTileTarget(target, pressedDirection.value);
+          targetPosition.value = getNextTileTarget(
+            target,
+            pressedDirection.value,
+          );
         } else {
           targetPosition.value = null;
           isMoving.value = false;
@@ -271,6 +316,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (movementDelayTimeoutRef.value) {
+    clearTimeout(movementDelayTimeoutRef.value);
+    movementDelayTimeoutRef.value = null;
+  }
   window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("keyup", onKeyup);
   zoomControls.value = null;

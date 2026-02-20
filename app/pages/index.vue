@@ -1,11 +1,11 @@
 <template>
   <div class="page">
-    <GameCanvas />
+    <GameWorld />
   </div>
 </template>
 
 <script setup lang="ts">
-import GameCanvas from "~/components/GameCanvas/GameCanvas.vue";
+import GameWorld from "~/components/GameWorld/GameWorld.vue";
 </script>
 
 <style scoped>
