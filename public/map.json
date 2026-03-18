@@ -2,6 +2,29 @@
   "tileSize": 16,
   "mapWidth": 24,
   "mapHeight": 53,
+  "rooms": [
+    {
+      "id": "main-hall",
+      "name": "Main Hall",
+      "bounds": { "x1": 1, "y1": 1, "x2": 22, "y2": 17 }
+    },
+    {
+      "id": "office",
+      "name": "Office",
+      "bounds": { "x1": 5, "y1": 19, "x2": 16, "y2": 27 },
+      "highlightColor": "rgba(255,200,200,0.45)"
+    },
+    {
+      "id": "right-corridor",
+      "name": "Right Corridor",
+      "bounds": { "x1": 18, "y1": 1, "x2": 22, "y2": 51 }
+    },
+    {
+      "id": "bottom-hall",
+      "name": "Bottom Hall",
+      "bounds": { "x1": 1, "y1": 29, "x2": 16, "y2": 51 }
+    }
+  ],
   "layers": [
     {
       "name": "barrier",

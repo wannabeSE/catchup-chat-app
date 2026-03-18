@@ -1,6 +1,7 @@
 <template>
   <div class="game-container">
     <div ref="canvasContainerRef" class="canvas-wrapper" tabindex="0" />
+    <div v-if="currentRoom" class="room-label">{{ currentRoom.name }}</div>
   </div>
 </template>
 
@@ -17,6 +18,12 @@ import {
   TOTAL_FRAMES,
   ANIMATION_SPEED,
 } from "~/constants/world-constants";
+import { useRooms } from "~/composables/useRooms";
+import {
+  createRoomOverlays,
+  updateRoomOverlayVisibility,
+} from "~/composables/useRoomOverlays";
+import type { Room } from "~/types/room";
 
 const canvasContainerRef = ref<HTMLDivElement | null>(null);
 const movementDelayTimeoutRef = ref<ReturnType<typeof setTimeout> | null>(null);
@@ -24,6 +31,7 @@ const movementDelayTimeoutRef = ref<ReturnType<typeof setTimeout> | null>(null);
 const app = await usePixi();
 const mapData = await $fetch<{
   tileSize: number;
+  rooms?: Room[];
   layers: {
     name: string;
     collider?: boolean;
@@ -66,8 +74,12 @@ layers.forEach((layer) => {
   });
 });
 
+const rooms = mapData.rooms ?? [];
+const { currentRoom, updateCurrentRoom } = useRooms(rooms, tileSize);
+
 // --- Hero state and movement (from GameCanvas) ---
 const heroPosition = ref<Position>({ x: 3 * tileSize, y: 3 * tileSize });
+updateCurrentRoom(heroPosition.value);
 const targetPosition = ref<Position | null>(null);
 const isMoving = ref(false);
 const pressedDirection = ref<Direction | null>(null);
@@ -234,7 +246,11 @@ const heroTick = (deltaSec: number) => {
   heroContainer.x = heroPosition.value.x;
   heroContainer.y = heroPosition.value.y;
   updateHeroSprite(facingDirection.value, isMoving.value);
+  updateCurrentRoom(heroPosition.value);
+  updateRoomOverlayVisibility(roomOverlays, currentRoom.value?.id ?? null);
 };
+
+const roomOverlays = createRoomOverlays(rooms, worldContainer, tileSize);
 
 worldContainer.addChild(heroContainer);
 app.ticker.add((t) => heroTick(t.deltaMS / 1000));
@@ -261,6 +277,7 @@ onUnmounted(() => {
 
 <style scoped>
 .game-container {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -276,5 +293,16 @@ onUnmounted(() => {
   width: 100%;
   border: 4px solid #222;
   image-rendering: pixelated;
+}
+.room-label {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 0.875rem;
+  border-radius: 4px;
 }
 </style>
