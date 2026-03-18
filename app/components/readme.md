@@ -56,6 +56,26 @@ Movement is grid-locked:
 
 See [§13 Next tile target](#13-next-tile-target), [§14 Wall check](#14-wall-check), [§16 Start walking](#16-start-walking), and [§21 Hero container & tick](#21-hero-container--tick).
 
+### 6. Rooms
+
+Rooms are rectangular regions defined in `map.json`. Each room has an `id`, `name`, and `bounds` (x1, y1, x2, y2 in tile coordinates). The `useRooms` composable provides `currentRoom`, `getRoomAtPosition`, and `updateCurrentRoom` so you can detect which room the hero is in.
+
+**Adding more rooms** – Edit `public/map.json` and add entries to the `rooms` array:
+
+```json
+"rooms": [
+  { "id": "main-hall", "name": "Main Hall", "bounds": { "x1": 1, "y1": 1, "x2": 22, "y2": 17 } },
+  { "id": "office", "name": "Office", "bounds": { "x1": 5, "y1": 19, "x2": 16, "y2": 27 } }
+]
+```
+
+- **id** – Unique identifier for the room.
+- **name** – Display name (e.g. for UI).
+- **bounds** – `x1,y1` = top-left tile, `x2,y2` = bottom-right tile (inclusive).
+- **highlightColor** (optional) – Tint shown only when the hero is in that room (e.g. `"rgba(255,200,200,0.45)"`). Add to any room to get a conditional overlay.
+
+The `useRooms` composable (`~/composables/useRooms`) is reusable: pass `rooms` and `tileSize`, then call `updateCurrentRoom(position)` each frame. The `useRoomOverlays` composable (`~/composables/useRoomOverlays`) creates overlays for rooms with `highlightColor` and toggles their visibility based on `currentRoom`.
+
 ---
 
 ## Contents
