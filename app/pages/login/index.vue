@@ -114,7 +114,8 @@ const login = async () => {
 
   console.log(data);
   if (data.user) {
-    await navigateTo("/realtime-test");
+    user.value = data.user;
+    await navigateTo("/");
   }
   if (error) {
     console.error("Login failed:", error);
@@ -130,9 +131,7 @@ onMounted(async () => {
 
   if (session?.user) {
     user.value = session.user;
-    await navigateTo("/realtime-test");
-  } else {
-    await login();
+    await navigateTo("/");
   }
   loading.value = false;
 });

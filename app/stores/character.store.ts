@@ -1,5 +1,16 @@
 import { defineStore } from "pinia";
 import { useSupabase } from "~/composables/useSupabase";
+import type { Position } from "~/types/shared";
+import {
+  isPositionWithinMapBounds,
+  pickRandomHeroSpawnPosition,
+} from "~/constants/world-constants";
+
+export type WorldSpawnContext = {
+  tileSize: number;
+  mapWidth: number;
+  mapHeight: number;
+};
 
 export const useCharacterStore = defineStore("character", {
   state: () => ({
@@ -13,28 +24,90 @@ export const useCharacterStore = defineStore("character", {
   actions: {
     async initialize(userId: string) {
       this.currentUserId = userId;
+      await this.fetchChatAreas();
+      await this.fetchCharacters();
+    },
 
-      // Create or fetch user's character
+    /**
+     * Load or create the user's row for GameWorld: reuse saved x/y when in bounds,
+     * otherwise a random spawn from fixed hero spawn tiles.
+     */
+    async ensureWorldCharacter(userId: string, ctx: WorldSpawnContext) {
+      this.currentUserId = userId;
       const { supabase } = useSupabase();
 
-      const { data: character } = await supabase
+      const { data: existing, error: selectError } = await supabase
         .from("characters")
-        .upsert({
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (selectError) {
+        console.error("ensureWorldCharacter select:", selectError);
+        return null;
+      }
+
+      if (existing) {
+        await supabase
+          .from("characters")
+          .update({ is_online: true })
+          .eq("user_id", userId);
+
+        let x = existing.x as number;
+        let y = existing.y as number;
+        if (
+          !isPositionWithinMapBounds(
+            { x, y },
+            ctx.tileSize,
+            ctx.mapWidth,
+            ctx.mapHeight,
+          )
+        ) {
+          const pos = pickRandomHeroSpawnPosition(ctx.tileSize);
+          x = pos.x;
+          y = pos.y;
+          await supabase
+            .from("characters")
+            .update({ x, y })
+            .eq("user_id", userId);
+        }
+
+        const merged = { ...existing, x, y };
+        const idx = this.characters.findIndex((c) => c.user_id === userId);
+        if (idx !== -1) this.characters.splice(idx, 1, merged);
+        else this.characters.push(merged);
+        return merged;
+      }
+
+      const pos = pickRandomHeroSpawnPosition(ctx.tileSize);
+
+      const { data: created, error: insertError } = await supabase
+        .from("characters")
+        .insert({
           user_id: userId,
-          x: Math.random() * 700,
-          y: Math.random() * 500,
+          x: pos.x,
+          y: pos.y,
           is_online: true,
         })
         .select()
         .single();
 
-      if (character) {
-        this.characters.push(character);
+      if (insertError) {
+        console.error("ensureWorldCharacter insert:", insertError);
+        return null;
       }
 
-      // Fetch existing chat areas and characters
-      await this.fetchChatAreas();
-      await this.fetchCharacters();
+      if (created) this.characters.push(created);
+      return created;
+    },
+
+    async persistWorldPosition(userId: string, position: Position) {
+      const { supabase } = useSupabase();
+      const { error } = await supabase
+        .from("characters")
+        .update({ x: position.x, y: position.y })
+        .eq("user_id", userId);
+      if (error) console.error("persistWorldPosition:", error);
     },
 
     async moveCharacter(direction: string) {

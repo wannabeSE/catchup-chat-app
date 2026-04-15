@@ -5,6 +5,8 @@
 </template>
 
 <script setup lang="ts">
+definePageMeta({ middleware: "auth" });
+
 import GameWorld from "~/components/GameWorld/GameWorld.vue";
 </script>
 
@@ -14,4 +16,3 @@ import GameWorld from "~/components/GameWorld/GameWorld.vue";
   height: 100vh;
 }
 </style>
-
