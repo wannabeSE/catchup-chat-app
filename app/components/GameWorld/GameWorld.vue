@@ -60,6 +60,11 @@ const sheetTexture = await Assets.load("/images/spritesheet.png");
 const tileSize = mapData.tileSize;
 const colsInSheet = Math.floor(sheetTexture.width / tileSize);
 const solidTiles = new Set<string>();
+/** Declared before movement helpers so `isMovementBlocked` can see other players' tiles. */
+const remoteSprites = new Map<string, Container>();
+const occupiedByRemote = new Set<string>();
+const getTileKey = (x: number, y: number): string =>
+  `${Math.floor(x / tileSize)},${Math.floor(y / tileSize)}`;
 const worldContainer = new Container();
 app.stage.addChild(worldContainer);
 
@@ -217,6 +222,14 @@ const getNextTileTarget = (from: Position, direction: Direction): Position => ({
 const isTileSolid = (pos: Position): boolean =>
   solidTiles.has(`${pos.x / tileSize},${pos.y / tileSize}`);
 
+/** Same grid as map collision; uses floor so interpolated broadcast positions still resolve to a tile. */
+const isTileOccupiedByRemote = (pos: Position): boolean => {
+  return occupiedByRemote.has(getTileKey(pos.x, pos.y));
+};
+
+const isMovementBlocked = (pos: Position) =>
+  isTileSolid(pos) || isTileOccupiedByRemote(pos);
+
 const moveTowards = (current: number, target: number, maxStep: number) =>
   current +
   Math.sign(target - current) * Math.min(Math.abs(target - current), maxStep);
@@ -224,7 +237,7 @@ const moveTowards = (current: number, target: number, maxStep: number) =>
 const startMovementToward = (direction: Direction) => {
   if (targetPosition.value) return;
   const next = getNextTileTarget(heroPosition.value, direction);
-  if (isTileSolid(next)) return;
+  if (isMovementBlocked(next)) return;
   targetPosition.value = next;
 };
 
@@ -316,7 +329,6 @@ heroContainer.addChild(heroSprite as unknown as Container);
 
 // --- Other players via Realtime Presence (no DB table) ---
 const othersRoot = new Container();
-const remoteSprites = new Map<string, Container>();
 
 /** If no packet arrives for this long while `moving` was true, treat as idle (stale flag / dropped send). */
 const REMOTE_IDLE_MS = 180;
@@ -358,6 +370,11 @@ function upsertRemoteSprite(
   moving?: boolean,
 ) {
   if (session?.user && userId === session.user.id) return;
+  // Remove old position from occupied set
+  const oldContainer = remoteSprites.get(userId);
+  if (oldContainer) {
+    occupiedByRemote.delete(getTileKey(oldContainer.x, oldContainer.y));
+  }
   let container = remoteSprites.get(userId);
   if (!container) {
     container = new Container();
@@ -384,10 +401,15 @@ function upsertRemoteSprite(
   }
   container.x = x;
   container.y = y;
+  // Add new position to occupied set
+  occupiedByRemote.add(getTileKey(x, y));
 }
 
 function removeRemoteSprite(userId: string) {
   const container = remoteSprites.get(userId);
+  if (container) {
+    occupiedByRemote.delete(getTileKey(container.x, container.y));
+  }
   if (!container) return;
   othersRoot.removeChild(container);
   container.destroy({ children: true });
@@ -583,7 +605,7 @@ const heroTick = (deltaSec: number) => {
       heroPosition.value = { ...target };
       if (pressedDirection.value) {
         const next = getNextTileTarget(target, pressedDirection.value);
-        if (!isTileSolid(next)) {
+        if (!isMovementBlocked(next)) {
           facingDirection.value = pressedDirection.value;
           targetPosition.value = next;
         } else {
