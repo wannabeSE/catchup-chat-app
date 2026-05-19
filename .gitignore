@@ -24,4 +24,6 @@ logs
 !.env.example
 
 # Claude Code: local OpenRouter / API secrets (never commit)
-.claude/settings.local.json
+.claude/
+.cursor/
+scripts/
