@@ -16,7 +16,16 @@
 <script setup lang="ts">
 import { useDebounceFn, useThrottleFn } from "@vueuse/core";
 import { usePixi } from "~/composables/usePixi";
-import { Assets, Container, Rectangle, Texture, Sprite } from "pixi.js";
+import {
+  Assets,
+  Container,
+  Graphics,
+  Rectangle,
+  Sprite,
+  Text,
+  TextStyle,
+  Texture,
+} from "pixi.js";
 import HeroImg from "../../../public/images/hero.png";
 import type { Direction, Position } from "~/types/shared";
 import {
@@ -60,9 +69,9 @@ const sheetTexture = await Assets.load("/images/spritesheet.png");
 const tileSize = mapData.tileSize;
 const colsInSheet = Math.floor(sheetTexture.width / tileSize);
 const solidTiles = new Set<string>();
-/** Declared before movement helpers so `isMovementBlocked` can see other players' tiles. */
-const remoteSprites = new Map<string, Container>();
-const occupiedByRemote = new Set<string>();
+/** Declared before movement helpers so `isMovementBlocked` can read remote player positions. */
+const remotePlayerContainers = new Map<string, Container>();
+const remoteOccupiedTileKeys = new Set<string>();
 const getTileKey = (x: number, y: number): string =>
   `${Math.floor(x / tileSize)},${Math.floor(y / tileSize)}`;
 const worldContainer = new Container();
@@ -144,6 +153,91 @@ const facingDirection = ref<Direction>("down");
 /** Same as Realtime presence `key` and broadcast `sender_key` (one tab per browser via localStorage). */
 const selfPresenceKey = session?.user?.id ?? "";
 
+const PLAYER_NAME_FONT_PX = 14;
+const NAME_BADGE_PAD_X = 8;
+const NAME_BADGE_PAD_Y = 4;
+/** Smaller gap = banner sits tighter to the sprite head. */
+const NAME_BADGE_GAP_ABOVE_SPRITE = 1;
+/** Semi-transparent black banner behind the name (letters stay solid white). */
+const NAME_BADGE_BG_ALPHA = 0.72;
+const NAME_BADGE_CORNER_RADIUS = 5;
+
+const playerNameTextStyle = new TextStyle({
+  fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+  fontSize: PLAYER_NAME_FONT_PX,
+  fill: 0xffffff,
+  align: "center",
+});
+
+function clampPlayerLabel(text: string, maxLen = 22): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen - 1)}…`;
+}
+
+function displayNameForAuthUser(
+  user:
+    | {
+        id: string;
+        email?: string | null;
+        user_metadata?: Record<string, unknown>;
+      }
+    | null
+    | undefined,
+): string {
+  if (!user) return "Player";
+  const m = user.user_metadata ?? {};
+  const fromMeta = m.full_name ?? m.name ?? m.username ?? m.display_name;
+  if (typeof fromMeta === "string" && fromMeta.trim().length > 0) {
+    return clampPlayerLabel(fromMeta);
+  }
+  const local = user.email?.split("@")[0]?.trim();
+  if (local) return clampPlayerLabel(local);
+  return clampPlayerLabel(`Player_${user.id.slice(0, 6)}`);
+}
+
+function resolveRemoteDisplayName(
+  userId: string,
+  payloadName: string | undefined,
+): string {
+  if (typeof payloadName === "string" && payloadName.trim().length > 0) {
+    return clampPlayerLabel(payloadName);
+  }
+  return clampPlayerLabel(`Player_${userId.slice(0, 6)}`);
+}
+
+function layoutPlayerNameBadgeBackground(badge: Container, label: Text) {
+  const bg = badge.children[0] as Graphics;
+  bg.clear();
+  const w = label.width + NAME_BADGE_PAD_X * 2;
+  const h = label.height + NAME_BADGE_PAD_Y * 2;
+  const r = Math.min(NAME_BADGE_CORNER_RADIUS, w / 2 - 0.5, h / 2 - 0.5);
+  bg.roundRect(-w / 2, -h, w, h, Math.max(0, r)).fill({
+    color: 0x000000,
+    alpha: NAME_BADGE_BG_ALPHA,
+  });
+}
+
+/** Banner above sprite: white text on translucent black pill. */
+function createPlayerNameBadge(initialText: string): Container {
+  const badge = new Container();
+  const bg = new Graphics();
+  const label = new Text({
+    text: initialText,
+    style: playerNameTextStyle,
+  });
+  label.anchor.set(0.5, 1);
+  label.x = 0;
+  label.y = -NAME_BADGE_PAD_Y;
+  badge.addChild(bg as unknown as Container);
+  badge.addChild(label as unknown as Container);
+  layoutPlayerNameBadgeBackground(badge, label);
+  badge.y = -(FRAME_HEIGHT + NAME_BADGE_GAP_ABOVE_SPRITE);
+  return badge;
+}
+
+const localPlayerDisplayName = displayNameForAuthUser(session?.user ?? null);
+
 const gameSessionActive = ref(true);
 const sessionSuperseded = ref(false);
 
@@ -164,6 +258,7 @@ function sendBroadcastState() {
     payload: {
       sender_key: selfPresenceKey,
       user_id: session.user.id,
+      display_name: localPlayerDisplayName,
       x: heroPosition.value.x,
       y: heroPosition.value.y,
       facing: facingDirection.value,
@@ -224,7 +319,7 @@ const isTileSolid = (pos: Position): boolean =>
 
 /** Same grid as map collision; uses floor so interpolated broadcast positions still resolve to a tile. */
 const isTileOccupiedByRemote = (pos: Position): boolean => {
-  return occupiedByRemote.has(getTileKey(pos.x, pos.y));
+  return remoteOccupiedTileKeys.has(getTileKey(pos.x, pos.y));
 };
 
 const isMovementBlocked = (pos: Position) =>
@@ -321,14 +416,20 @@ const updateHeroSprite = (direction: Direction, moving: boolean) => {
   heroSprite.texture = getFrameTexture(row, column);
 };
 
-const heroContainer = new Container();
-heroContainer.x = heroPosition.value.x;
-heroContainer.y = heroPosition.value.y;
-heroContainer.scale.set(0.7, 0.7);
-heroContainer.addChild(heroSprite as unknown as Container);
+const localPlayerContainer = new Container();
+localPlayerContainer.x = heroPosition.value.x;
+localPlayerContainer.y = heroPosition.value.y;
+localPlayerContainer.scale.set(0.7, 0.7);
+localPlayerContainer.addChild(heroSprite as unknown as Container);
+localPlayerContainer.addChild(
+  createPlayerNameBadge(localPlayerDisplayName) as unknown as Container,
+);
 
 // --- Other players via Realtime Presence (no DB table) ---
-const othersRoot = new Container();
+/** Local player + remote players: one layer so Pixi can Y-sort draw order (depth). */
+const playerSpritesLayer = new Container();
+playerSpritesLayer.sortableChildren = true;
+playerSpritesLayer.addChild(localPlayerContainer);
 
 /** If no packet arrives for this long while `moving` was true, treat as idle (stale flag / dropped send). */
 const REMOTE_IDLE_MS = 180;
@@ -341,7 +442,7 @@ type RemoteAnimState = {
   lastPacketAt: number;
 };
 
-const remoteAnimState = new Map<string, RemoteAnimState>();
+const remotePlayerAnimByUserId = new Map<string, RemoteAnimState>();
 
 const DIRECTIONS = ["up", "down", "left", "right"] as const;
 
@@ -368,76 +469,98 @@ function upsertRemoteSprite(
   y: number,
   facing?: Direction,
   moving?: boolean,
+  displayName?: string,
 ) {
   if (session?.user && userId === session.user.id) return;
   // Remove old position from occupied set
-  const oldContainer = remoteSprites.get(userId);
-  if (oldContainer) {
-    occupiedByRemote.delete(getTileKey(oldContainer.x, oldContainer.y));
+  const existingRemoteContainer = remotePlayerContainers.get(userId);
+  if (existingRemoteContainer) {
+    remoteOccupiedTileKeys.delete(
+      getTileKey(existingRemoteContainer.x, existingRemoteContainer.y),
+    );
   }
-  let container = remoteSprites.get(userId);
-  if (!container) {
-    container = new Container();
+  let remotePlayerContainer = remotePlayerContainers.get(userId);
+  if (!remotePlayerContainer) {
+    remotePlayerContainer = new Container();
     const sprite = new Sprite(getFrameTexture(getRowByDirection("down"), 0));
     sprite.anchor.set(0.5, 1);
     sprite.tint = tintForUserId(userId);
-    container.scale.set(0.7, 0.7);
-    container.addChild(sprite as unknown as Container);
-    othersRoot.addChild(container);
-    remoteSprites.set(userId, container);
-    remoteAnimState.set(userId, {
+    remotePlayerContainer.scale.set(0.7, 0.7);
+    remotePlayerContainer.addChild(sprite as unknown as Container);
+    remotePlayerContainer.addChild(
+      createPlayerNameBadge(
+        resolveRemoteDisplayName(userId, displayName),
+      ) as unknown as Container,
+    );
+    playerSpritesLayer.addChild(remotePlayerContainer);
+    remotePlayerContainers.set(userId, remotePlayerContainer);
+    remotePlayerAnimByUserId.set(userId, {
       frameIndex: 0,
       elapsedTime: 0,
       facing: facing ?? "down",
       moving: moving ?? false,
       lastPacketAt: performance.now(),
     });
+  } else if (displayName !== undefined) {
+    const resolved = resolveRemoteDisplayName(userId, displayName);
+    const badge = remotePlayerContainer.children[1] as Container | undefined;
+    const label = badge?.children[1] as Text | undefined;
+    if (label && label.text !== resolved) {
+      label.text = resolved;
+      if (badge) layoutPlayerNameBadgeBackground(badge, label);
+    }
   }
-  const anim = remoteAnimState.get(userId);
-  if (anim) {
-    if (facing !== undefined) anim.facing = facing;
-    if (moving !== undefined) anim.moving = moving;
-    anim.lastPacketAt = performance.now();
+  const remotePlayerAnim = remotePlayerAnimByUserId.get(userId);
+  if (remotePlayerAnim) {
+    if (facing !== undefined) remotePlayerAnim.facing = facing;
+    if (moving !== undefined) remotePlayerAnim.moving = moving;
+    remotePlayerAnim.lastPacketAt = performance.now();
   }
-  container.x = x;
-  container.y = y;
+  remotePlayerContainer.x = x;
+  remotePlayerContainer.y = y;
   // Add new position to occupied set
-  occupiedByRemote.add(getTileKey(x, y));
+  remoteOccupiedTileKeys.add(getTileKey(x, y));
 }
 
 function removeRemoteSprite(userId: string) {
-  const container = remoteSprites.get(userId);
-  if (container) {
-    occupiedByRemote.delete(getTileKey(container.x, container.y));
+  const remotePlayerContainer = remotePlayerContainers.get(userId);
+  if (remotePlayerContainer) {
+    remoteOccupiedTileKeys.delete(
+      getTileKey(remotePlayerContainer.x, remotePlayerContainer.y),
+    );
   }
-  if (!container) return;
-  othersRoot.removeChild(container);
-  container.destroy({ children: true });
-  remoteSprites.delete(userId);
-  remoteAnimState.delete(userId);
+  if (!remotePlayerContainer) return;
+  playerSpritesLayer.removeChild(remotePlayerContainer);
+  remotePlayerContainer.destroy({ children: true });
+  remotePlayerContainers.delete(userId);
+  remotePlayerAnimByUserId.delete(userId);
 }
 
 function updateRemoteSpriteTexture(userId: string) {
-  const anim = remoteAnimState.get(userId);
-  const container = remoteSprites.get(userId);
-  if (!container || !anim) return;
+  const remotePlayerAnim = remotePlayerAnimByUserId.get(userId);
+  const remotePlayerContainer = remotePlayerContainers.get(userId);
+  if (!remotePlayerContainer || !remotePlayerAnim) return;
   const now = performance.now();
-  if (anim.moving && now - anim.lastPacketAt > REMOTE_IDLE_MS) {
-    anim.moving = false;
+  if (
+    remotePlayerAnim.moving &&
+    now - remotePlayerAnim.lastPacketAt > REMOTE_IDLE_MS
+  ) {
+    remotePlayerAnim.moving = false;
   }
-  const sprite = container.children[0] as Sprite;
-  const row = getRowByDirection(anim.facing);
+  const sprite = remotePlayerContainer.children[0] as Sprite;
+  const row = getRowByDirection(remotePlayerAnim.facing);
   let column = 0;
-  if (anim.moving) {
-    anim.elapsedTime += ANIMATION_SPEED;
-    if (anim.elapsedTime >= 1) {
-      anim.elapsedTime = 0;
-      anim.frameIndex = (anim.frameIndex + 1) % TOTAL_FRAMES;
+  if (remotePlayerAnim.moving) {
+    remotePlayerAnim.elapsedTime += ANIMATION_SPEED;
+    if (remotePlayerAnim.elapsedTime >= 1) {
+      remotePlayerAnim.elapsedTime = 0;
+      remotePlayerAnim.frameIndex =
+        (remotePlayerAnim.frameIndex + 1) % TOTAL_FRAMES;
     }
-    column = anim.frameIndex;
+    column = remotePlayerAnim.frameIndex;
   } else {
-    anim.frameIndex = 0;
-    anim.elapsedTime = 0;
+    remotePlayerAnim.frameIndex = 0;
+    remotePlayerAnim.elapsedTime = 0;
   }
   sprite.texture = getFrameTexture(row, column);
 }
@@ -445,6 +568,7 @@ function updateRemoteSpriteTexture(userId: string) {
 type PresencePayload = {
   user_id?: string;
   sender_key?: string;
+  display_name?: string;
   x?: number;
   y?: number;
   facing?: unknown;
@@ -461,8 +585,8 @@ function pruneRemoteSpritesNotInPresence(state: Record<string, unknown>) {
       if (typeof p.user_id === "string") activeUserIds.add(p.user_id);
     }
   }
-  for (const uid of remoteSprites.keys()) {
-    if (!activeUserIds.has(uid)) removeRemoteSprite(uid);
+  for (const remoteUserId of remotePlayerContainers.keys()) {
+    if (!activeUserIds.has(remoteUserId)) removeRemoteSprite(remoteUserId);
   }
 }
 
@@ -486,6 +610,7 @@ function receivePresenceState(state: Record<string, unknown>) {
         p.y,
         parseFacing(p.facing),
         typeof p.moving === "boolean" ? p.moving : undefined,
+        typeof p.display_name === "string" ? p.display_name : undefined,
       );
     }
   }
@@ -520,12 +645,12 @@ function teardownSupersededSession() {
     void supabase.removeChannel(presenceChannel);
     presenceChannel = null;
   }
-  for (const [, container] of remoteSprites) {
-    othersRoot.removeChild(container);
-    container.destroy({ children: true });
+  for (const [, remotePlayerContainer] of remotePlayerContainers) {
+    playerSpritesLayer.removeChild(remotePlayerContainer);
+    remotePlayerContainer.destroy({ children: true });
   }
-  remoteSprites.clear();
-  remoteAnimState.clear();
+  remotePlayerContainers.clear();
+  remotePlayerAnimByUserId.clear();
   if (tickerFnRef) {
     app.ticker.remove(tickerFnRef);
     tickerFnRef = null;
@@ -572,6 +697,7 @@ if (import.meta.client && session?.user) {
         y,
         parseFacing(p.facing),
         typeof p.moving === "boolean" ? p.moving : undefined,
+        typeof p.display_name === "string" ? p.display_name : undefined,
       );
     },
   );
@@ -581,6 +707,7 @@ if (import.meta.client && session?.user) {
       await presenceChannel.track({
         user_id: session.user.id,
         sender_key: selfPresenceKey,
+        display_name: localPlayerDisplayName,
         x: heroPosition.value.x,
         y: heroPosition.value.y,
         facing: facingDirection.value,
@@ -623,11 +750,16 @@ const heroTick = (deltaSec: number) => {
       };
     }
   }
-  heroContainer.x = heroPosition.value.x;
-  heroContainer.y = heroPosition.value.y;
+  localPlayerContainer.x = heroPosition.value.x;
+  localPlayerContainer.y = heroPosition.value.y;
+  localPlayerContainer.zIndex = localPlayerContainer.y;
+  for (const [, remotePlayerContainer] of remotePlayerContainers) {
+    remotePlayerContainer.zIndex = remotePlayerContainer.y;
+  }
+  playerSpritesLayer.sortChildren();
   updateHeroSprite(facingDirection.value, isMoving.value);
-  for (const uid of remoteSprites.keys()) {
-    updateRemoteSpriteTexture(uid);
+  for (const remoteUserId of remotePlayerContainers.keys()) {
+    updateRemoteSpriteTexture(remoteUserId);
   }
   updateCurrentRoom(heroPosition.value);
   updateRoomOverlayVisibility(roomOverlays, currentRoom.value?.id ?? null);
@@ -635,8 +767,7 @@ const heroTick = (deltaSec: number) => {
 
 const roomOverlays = createRoomOverlays(rooms, worldContainer, tileSize);
 
-worldContainer.addChild(othersRoot);
-worldContainer.addChild(heroContainer);
+worldContainer.addChild(playerSpritesLayer);
 
 const runHeroTick = (t: { deltaMS: number }) => {
   if (!gameSessionActive.value) return;
@@ -664,12 +795,12 @@ onUnmounted(() => {
     void supabase.removeChannel(presenceChannel);
     presenceChannel = null;
   }
-  for (const [, container] of remoteSprites) {
-    othersRoot.removeChild(container);
-    container.destroy({ children: true });
+  for (const [, remotePlayerContainer] of remotePlayerContainers) {
+    playerSpritesLayer.removeChild(remotePlayerContainer);
+    remotePlayerContainer.destroy({ children: true });
   }
-  remoteSprites.clear();
-  remoteAnimState.clear();
+  remotePlayerContainers.clear();
+  remotePlayerAnimByUserId.clear();
 
   if (tickerFnRef) {
     app.ticker.remove(tickerFnRef);

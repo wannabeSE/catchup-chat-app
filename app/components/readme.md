@@ -2,6 +2,8 @@
 
 A tile-based 2D game view: map layers, hero movement, and collision. This doc walks through how it works in plain language.
 
+For **authenticated access**, **multiplayer (Supabase Realtime)**, **single active tab** (`localStorage` / `storage` via [`useSingleGameTab`](../composables/useSingleGameTab.ts)), and migration notes (e.g. dropping legacy `game_client_lease`), see **[`docs/game-world-implementation.md`](../../docs/game-world-implementation.md)**.
+
 ---
 
 ## Sprite Fusion to PixiJS Implementation Guide
